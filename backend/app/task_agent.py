@@ -577,7 +577,7 @@ async def decide_immediate_action(state: AgentState):
         5. Get all link elements: This will be the action you take if you decide you need to open a link
         6. Go Back: If you decide you need to go back to the previous page, you should respond with "Go Back"
         7. Go To Search: If you decide you need to go to a search engine, you should respond with "Go To Search"
-            - Dont call Go To Search if you are already on google.com as indicated by the current page url or if you have already navigated to google.com in the previous step.
+            - Avoid to call Go To Search if you are already on google.com as indicated by the current page url or if you have already navigated to google.com in the previous step.
         8. Wait: If you decide you need to wait for a page to load, you should respond with "Wait"
         9. Type in a text editor: If you decide you need to type in a text editor such as a google doc or some similar text editor based on the user input, you should respond with "Type in a text editor"
             - If you end up at a point where you need to type in a text editor after navigating to the respective text editor url, skip the other steps and directly respond with "Type in a text editor" since, this step has the ability to infer dom element for text editor
@@ -956,7 +956,7 @@ async def click(state: AgentState):
                     bbox_x, bbox_y
                 )
                 await asyncio.sleep(0.5)
-            except Exception:
+            except Exception as e:
                 return {"actions_taken": [f"Failed to scroll to element: {str(e)}"]}
 
     

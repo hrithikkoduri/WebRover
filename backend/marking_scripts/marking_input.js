@@ -60,7 +60,7 @@ function captureInteractiveElements(options = {}) {
         .filter(e => e.tagName === current.tagName)
         .indexOf(current) + 1;
       parts.unshift(
-        index > 1
+        index > 0
           ? `${current.tagName.toLowerCase()}[${index}]`
           : current.tagName.toLowerCase()
       );

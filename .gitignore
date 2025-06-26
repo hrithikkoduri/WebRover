@@ -22,3 +22,35 @@ webvoyager7_final.ipynb
 rag_store_webpage/
 
 backend_old/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.py[cod]
+*$py.class
+
+# Claude settings
+.claude/*
+
+# Virtual environments
+*.venv
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+.eggs/
+

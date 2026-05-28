@@ -265,3 +265,44 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 Made with ❤️ by [@hrithikkoduri](https://github.com/hrithikkoduri)
+
+## ❓ FAQ
+
+### What is WebRover?
+WebRover is an AI-powered web agent that combines autonomous browsing with advanced research capabilities. It offers three specialized agents: Task Agent for web automation, Research Agent for information gathering, and Deep Research Agent for academic-quality content generation.
+
+### Key Features
+| Feature | Description |
+|---------|-------------|
+| **Three Agent Types** | Task, Research, Deep Research agents for different use cases |
+| **Dynamic Selection** | Intelligent agent routing based on task complexity |
+| **Real-time Visualization** | Streaming agent actions and thoughts |
+| **Local Browser** | Privacy-focused local browser instance |
+| **Multi-tab Management** | Handle multiple tabs simultaneously |
+| **PDF Support** | Extract and process PDF documents |
+| **Vector Store** | RAG pipeline for information retention |
+| **Academic Papers** | Generate properly cited academic content |
+
+### How to Install
+```bash
+git clone https://github.com/hrithikkoduri/WebRover.git
+cd WebRover
+# Follow Setup Instructions in readme.md
+```
+
+### Supported LLM Models
+- GPT-4o
+- o3-mini-high
+- Claude-3.5 Sonnet
+
+### Requirements
+- Python (Backend)
+- Node.js (Frontend)
+- OpenAI/Claude API keys
+
+### License
+MIT License
+
+### Help Resources
+- [Issues](https://github.com/hrithikkoduri/WebRover/issues)
+- [Demo Videos](https://github.com/hrithikkoduri/WebRover#demo-videos)

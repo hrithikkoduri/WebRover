@@ -208,7 +208,8 @@ async def stream_research_agent_response(query: str, page, agent_graph):
             "conversation_history": [],
             "answer": "",
             "new_page": False,
-            "is_pdf": False
+            "is_pdf": False,
+            "empty_dom_retries": 0
         }
         
         async for event in agent_graph.astream(
@@ -304,7 +305,8 @@ async def stream_deep_research_agent_response(query: str, page, agent_graph):
             "subtopic_status": [],
             "subtopic_to_research": "",
             "number_of_urls_visited": 0,
-            "collect_more_info": False
+            "collect_more_info": False,
+            "empty_dom_retries": 0
         }
         
         async for event in agent_graph.astream(

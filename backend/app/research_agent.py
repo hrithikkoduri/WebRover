@@ -88,6 +88,7 @@ class AgentState(TypedDict):
     new_page: Literal[True, False]
     answer: str
     is_pdf: Literal[True, False]
+    empty_dom_retries: int
 
 
     
@@ -440,7 +441,7 @@ async def scroll_pdf(state: AgentState):
 async def close_page(state: AgentState):
     context = state["page"].context  # Get the browser context from the current page
     await state["page"].close()        # Close the current tab
-    page = context.pages[-1] 
+    page = context.pages[-1] if context.pages else await context.new_page()
     print(page.url)
     return {"actions_taken": [f"Closed the current tab and switched to the last opened tab"], "page": page}
 
@@ -451,7 +452,7 @@ async def close_opened_link(state: AgentState):
     current_url = state["page"].url
     context = state["page"].context  # Get the browser context from the current page
     await state["page"].close()        # Close the current tab
-    page = context.pages[-1] 
+    page = context.pages[-1] if context.pages else await context.new_page()
     await page.evaluate("""
                 async () => {
                     const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -703,12 +704,37 @@ async def annotate_page(state: AgentState):
     page = state["page"]
     dom_elements = await execute_script(page)
 
+    if not dom_elements:
+        # No interactive elements were captured. This happens on blank or
+        # not-yet-loaded tabs (for example a tab left behind after closing an
+        # opened link) and on pages that have nothing interactive. Give the page
+        # a moment and try once more before deciding the page is unusable.
+        await asyncio.sleep(2)
+        dom_elements = await execute_script(page)
+
     await remove_highlights(page)
 
-    if dom_elements[0]["type"] == "pdf":
-        return {"dom_elements": dom_elements, "is_pdf": True}
-    else:
-        return {"dom_elements": dom_elements, "is_pdf": False}
+    is_pdf = bool(dom_elements) and dom_elements[0]["type"] == "pdf"
+
+    if not dom_elements:
+        return {
+            "dom_elements": dom_elements,
+            "is_pdf": is_pdf,
+            "empty_dom_retries": state.get("empty_dom_retries", 0) + 1,
+            "actions_taken": [f"No interactive elements found on {page.url}"],
+        }
+
+    return {"dom_elements": dom_elements, "is_pdf": is_pdf, "empty_dom_retries": 0}
+
+
+async def after_annotate_router(state: AgentState):
+    """A page without interactive elements cannot be acted on, so fall back to search."""
+    if state.get("dom_elements"):
+        return "llm_call_node"
+    if state.get("empty_dom_retries", 0) < 3:
+        return "go_to_search"
+    # Browsing is not yielding a usable page; answer with whatever was collected.
+    return "answer_node"
 
 
 
@@ -917,9 +943,24 @@ async def answer_node(state: AgentState):
 
     total_docs = vector_store._collection.count() 
     print("Total docs: ", total_docs)
-    relevant_docs = vector_store.similarity_search(input, k=total_docs)
-    
     visited_urls = state.get("visited_urls", [])
+
+    if total_docs == 0:
+        # Nothing was ever scraped into the vector store (every page failed to
+        # yield text). Asking the LLM to answer from an empty store produces
+        # meaningless output, and Chroma rejects a k=0 query.
+        message = (
+            "I was unable to gather any content from the websites I visited, "
+            "so I cannot produce a grounded answer for this query. "
+            "Please try rephrasing the query or asking about a different topic."
+        )
+        return {
+            "answer": message,
+            "conversation_history": [f"User : {input}"] + [f"WebRover : {message}"],
+            "actions_taken": ["No documents were collected, so no answer could be generated"],
+        }
+
+    relevant_docs = vector_store.similarity_search(input, k=total_docs)
 
 
 
@@ -1073,7 +1114,7 @@ builder.add_node("self_review", self_review)
 
 builder.add_edge(START, "url_decide_node")
 builder.add_edge("url_decide_node", "annotate_page")
-builder.add_edge("annotate_page", "llm_call_node")
+builder.add_conditional_edges("annotate_page", after_annotate_router, ["llm_call_node", "go_to_search", "answer_node"])
 builder.add_conditional_edges("llm_call_node", tool_router, ["annotate_page", "click", "type", "scroll_and_read", "close_page", "wait", "go_back", "go_to_search"])
 builder.add_edge("scroll_and_read", "web_page_rag")
 builder.add_conditional_edges("scroll_and_read", webpage_or_pdf, ["scroll_page", "scroll_pdf"])

@@ -109,6 +109,7 @@ class AgentState(TypedDict):
     subtopic_to_research: str
     number_of_urls_visited: int
     collect_more_info: Literal[True, False]
+    empty_dom_retries: int
     
     
 
@@ -462,7 +463,7 @@ async def scroll_pdf(state: AgentState):
 async def close_page(state: AgentState):
     context = state["page"].context  # Get the browser context from the current page
     await state["page"].close()        # Close the current tab
-    page = context.pages[-1] 
+    page = context.pages[-1] if context.pages else await context.new_page()
     print(page.url)
     return {"actions_taken": [f"Closed the current tab and switched to the last opened tab"], "page": page}
 
@@ -473,7 +474,7 @@ async def close_opened_link(state: AgentState):
     current_url = state["page"].url
     context = state["page"].context  # Get the browser context from the current page
     await state["page"].close()        # Close the current tab
-    page = context.pages[-1] 
+    page = context.pages[-1] if context.pages else await context.new_page()
     await page.evaluate("""
     async () => {
         const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -787,12 +788,37 @@ async def annotate_page(state: AgentState):
     
     dom_elements = await execute_script(page)
 
+    if not dom_elements:
+        # No interactive elements were captured. This happens on blank or
+        # not-yet-loaded tabs (for example a tab left behind after closing an
+        # opened link) and on pages that have nothing interactive. Give the page
+        # a moment and try once more before deciding the page is unusable.
+        await asyncio.sleep(2)
+        dom_elements = await execute_script(page)
+
     await remove_highlights(page)
 
-    if dom_elements[0]["type"] == "pdf":
-        return {"dom_elements": dom_elements, "is_pdf": True}
-    else:
-        return {"dom_elements": dom_elements, "is_pdf": False}
+    is_pdf = bool(dom_elements) and dom_elements[0]["type"] == "pdf"
+
+    if not dom_elements:
+        return {
+            "dom_elements": dom_elements,
+            "is_pdf": is_pdf,
+            "empty_dom_retries": state.get("empty_dom_retries", 0) + 1,
+            "actions_taken": [f"No interactive elements found on {page.url}"],
+        }
+
+    return {"dom_elements": dom_elements, "is_pdf": is_pdf, "empty_dom_retries": 0}
+
+
+async def after_annotate_router(state: AgentState):
+    """A page without interactive elements cannot be acted on, so fall back to search."""
+    if state.get("dom_elements"):
+        return "llm_call_node"
+    if state.get("empty_dom_retries", 0) < 3:
+        return "go_to_search"
+    # Browsing is not yielding a usable page; write the subtopic with what we have.
+    return "subtopic_answer_node"
 
 
 
@@ -991,7 +1017,24 @@ async def subtopic_answer_node(state: AgentState):
     input = state["subtopic_to_research"]
 
     relevant_docs = vector_store.similarity_search(input, k=40)
-    
+
+    if not relevant_docs:
+        # No sources were collected for this subtopic (every visited page failed
+        # to yield usable text). Skip the LLM call rather than inventing content
+        # that has no supporting documents.
+        return {
+            "subtopic_answers": [SubtopicAnswer(
+                subtopic=input,
+                subtopic_answer=(
+                    f"# {input}\n\nNo sources could be collected for this subtopic, "
+                    "so no grounded write-up is available."
+                ),
+                references=[],
+            )],
+            "subtopic_status": [f"Research on {input} completed"],
+            "actions_taken": [f"No documents found for {input}, skipping write-up"],
+        }
+
 
     system_message = """
         Role: Expert Article Writer for Research Compilation
@@ -1201,7 +1244,7 @@ builder.add_edge(START, "url_decide_node")
 builder.add_edge("url_decide_node", "topic_breakdown")
 builder.add_edge("topic_breakdown", "track_subtopic_status")
 builder.add_conditional_edges("track_subtopic_status", research_router, ["go_to_search", "compile_research"])
-builder.add_edge("annotate_page", "llm_call_node")
+builder.add_conditional_edges("annotate_page", after_annotate_router, ["llm_call_node", "go_to_search", "subtopic_answer_node"])
 builder.add_conditional_edges("llm_call_node", tool_router, ["annotate_page", "click", "type", "scroll_and_read", "close_page", "wait", "go_back", "go_to_search"])
 builder.add_edge("scroll_and_read", "web_page_rag")
 builder.add_conditional_edges("scroll_and_read", webpage_or_pdf, ["scroll_page", "scroll_pdf"])

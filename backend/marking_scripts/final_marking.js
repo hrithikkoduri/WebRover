@@ -242,6 +242,12 @@ function captureInteractiveElements(options = {}) {
     }
   
     // Use a TreeWalker to traverse the document and capture interactive elements.
+    // Guard against pages that are still loading or have no body yet; the caller
+    // treats an empty list as "no interactive elements on this page".
+    if (!document.body) {
+        console.log("No document.body yet, returning no interactive elements.");
+        return [];
+    }
     const capturedElements = [];
     const walker = document.createTreeWalker(
         document.body,

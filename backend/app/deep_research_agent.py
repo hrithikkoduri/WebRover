@@ -462,7 +462,12 @@ async def scroll_pdf(state: AgentState):
 async def close_page(state: AgentState):
     context = state["page"].context  # Get the browser context from the current page
     await state["page"].close()        # Close the current tab
-    page = context.pages[-1] 
+    if context.pages:
+        page = context.pages[-1]
+    else:
+        # Last tab was closed: open a fresh one on Google so the agent has a page to act on.
+        page = await context.new_page()
+        await page.goto("https://www.google.com", timeout=30000, wait_until="domcontentloaded")
     print(page.url)
     return {"actions_taken": [f"Closed the current tab and switched to the last opened tab"], "page": page}
 
@@ -473,7 +478,12 @@ async def close_opened_link(state: AgentState):
     current_url = state["page"].url
     context = state["page"].context  # Get the browser context from the current page
     await state["page"].close()        # Close the current tab
-    page = context.pages[-1] 
+    if context.pages:
+        page = context.pages[-1]
+    else:
+        # Last tab was closed: open a fresh one on Google so the agent has a page to act on.
+        page = await context.new_page()
+        await page.goto("https://www.google.com", timeout=30000, wait_until="domcontentloaded")
     await page.evaluate("""
     async () => {
         const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -789,7 +799,7 @@ async def annotate_page(state: AgentState):
 
     await remove_highlights(page)
 
-    if dom_elements[0]["type"] == "pdf":
+    if dom_elements and dom_elements[0]["type"] == "pdf":
         return {"dom_elements": dom_elements, "is_pdf": True}
     else:
         return {"dom_elements": dom_elements, "is_pdf": False}

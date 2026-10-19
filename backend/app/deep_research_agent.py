@@ -242,7 +242,10 @@ async def click(state: AgentState):
         }
 
     try:
-        element = page.locator(f'xpath={xpath}')
+        # .first is required — the element xpaths produced by the marking
+        # scripts can match multiple sibling elements (e.g. a nav bar's <a>
+        # tags), and Playwright's strict mode would otherwise fail the click.
+        element = page.locator(f'xpath={xpath}').first
         if element_type == "link":
             try:
                 async with page.context.expect_page(timeout=10000) as new_page_info:

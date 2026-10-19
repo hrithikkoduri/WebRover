@@ -968,31 +968,45 @@ async def click(state: AgentState):
         attempts += 1
         try:
             if "link" in element_type:
-                # Handle links with existing logic
-                async with page.context.expect_page(timeout=10000) as new_page_info:
-                    if platform.system() == "Darwin":
-                        await page.locator(f'xpath={xpath}').click(
-                            modifiers=["Meta"],
-                            timeout=5000,
-                            force=attempts == max_attempts  # Force click on last attempt
-                        )
-                    else:
-                        await page.locator(f'xpath={xpath}').click(
-                            modifiers=["Control"],
-                            timeout=5000,
-                            force=attempts == max_attempts
-                        )
-                    
+                # Handle links with existing logic.
+                # NOTE: .first is required — the element xpaths produced by the
+                # marking scripts can match multiple sibling elements (e.g. a nav
+                # bar's <a> tags), and Playwright's strict mode would otherwise
+                # fail every attempt.
+                element = page.locator(f'xpath={xpath}').first
+                try:
+                    async with page.context.expect_page(timeout=10000) as new_page_info:
+                        if platform.system() == "Darwin":
+                            await element.click(
+                                modifiers=["Meta"],
+                                timeout=5000,
+                                force=attempts == max_attempts  # Force click on last attempt
+                            )
+                        else:
+                            await element.click(
+                                modifiers=["Control"],
+                                timeout=5000,
+                                force=attempts == max_attempts
+                            )
+
                     new_page = await new_page_info.value
                     await asyncio.sleep(3)
                     await new_page.bring_to_front()
                     state["page"] = new_page
-                    success = True
+                except Exception:
+                    # Links without target="_blank" (or intercepted by the site)
+                    # navigate in the current tab instead of opening a new one.
+                    # That is still a successful click.
+                    if page.url == old_page:
+                        raise
+                    await page.wait_for_load_state("domcontentloaded")
+                success = True
             else:
                 # Enhanced button/element clicking
                 try:
-                    # Try precise click first
-                    await page.locator(f'xpath={xpath}').click(
+                    # Try precise click first (.first to avoid strict-mode
+                    # violations when the xpath matches multiple elements)
+                    await page.locator(f'xpath={xpath}').first.click(
                         timeout=5000,
                         delay=100,  # Add slight delay for stability
                         force=attempts == max_attempts
@@ -1027,8 +1041,7 @@ async def click(state: AgentState):
                         await page.mouse.click(
                             bbox_x,
                             bbox_y,
-                            delay=100,
-                            force=attempts == max_attempts
+                            delay=100
                         )
                     
                     # Wait briefly to check if click had an effect

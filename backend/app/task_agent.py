@@ -7,6 +7,7 @@ from typing import TypedDict, List, Annotated, Literal, Optional
 from operator import add
 from playwright.async_api import Page, Locator
 from playwright.async_api import async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
@@ -747,12 +748,12 @@ async def interact_with_link_elements(state: AgentState):
     link_elements = state["dom_elements"]
 
     messages = [SystemMessage(content=system_message), HumanMessage(content=human_message.format(input=input, actions_taken=actions_taken, page=page, link_elements=link_elements))]
-    
+
     response = llm.with_structured_output(Actions).invoke(messages)
-    
+
     return {"actions": response}
-    
-    
+
+
 # Type / Type in Text Editor Node
 
 async def type(state: AgentState):
@@ -802,7 +803,7 @@ async def type(state: AgentState):
                     bbox_x, bbox_y
                 )
                 await asyncio.sleep(0.5)
-            except Exception:
+            except Exception as e:
                 return {"actions_taken": [f"Failed to scroll to element: {str(e)}"]}
 
 
@@ -956,7 +957,7 @@ async def click(state: AgentState):
                     bbox_x, bbox_y
                 )
                 await asyncio.sleep(0.5)
-            except Exception:
+            except Exception as e:
                 return {"actions_taken": [f"Failed to scroll to element: {str(e)}"]}
 
     
@@ -968,8 +969,18 @@ async def click(state: AgentState):
         attempts += 1
         try:
             if "link" in element_type:
-                # Handle links with existing logic
-                async with page.context.expect_page(timeout=10000) as new_page_info:
+                # A link click can either open a new tab or navigate in the
+                # same tab. Use a listener for the context's "page" event so
+                # the click is only treated as failed when neither a new tab
+                # opened nor the current page navigated.
+                new_page_future = asyncio.get_running_loop().create_future()
+
+                def _on_new_page(p):
+                    if not new_page_future.done():
+                        new_page_future.set_result(p)
+
+                page.context.on("page", _on_new_page)
+                try:
                     if platform.system() == "Darwin":
                         await page.locator(f'xpath={xpath}').click(
                             modifiers=["Meta"],
@@ -982,12 +993,50 @@ async def click(state: AgentState):
                             timeout=5000,
                             force=attempts == max_attempts
                         )
-                    
-                    new_page = await new_page_info.value
-                    await asyncio.sleep(3)
-                    await new_page.bring_to_front()
-                    state["page"] = new_page
-                    success = True
+
+                    # Give the browser a moment to open a tab or navigate.
+                    try:
+                        new_page = await asyncio.wait_for(
+                            asyncio.shield(new_page_future), timeout=5
+                        )
+                    except asyncio.TimeoutError:
+                        new_page = None
+
+                    if new_page:
+                        await new_page.bring_to_front()
+                        await new_page.wait_for_load_state(
+                            "domcontentloaded", timeout=10000
+                        )
+                        state["page"] = new_page
+                        success = True
+                    elif page.url != old_page:
+                        # Link navigated in the same tab.
+                        success = True
+                    elif attempts == max_attempts:
+                        # Meta/Ctrl+click opened neither a new tab nor a
+                        # navigation: try a plain click so links that
+                        # navigate in the same tab still work.
+                        await page.locator(f'xpath={xpath}').click(
+                            timeout=5000,
+                            force=True
+                        )
+                        try:
+                            new_page = await asyncio.wait_for(
+                                asyncio.shield(new_page_future), timeout=5
+                            )
+                        except asyncio.TimeoutError:
+                            new_page = None
+                        if new_page:
+                            await new_page.bring_to_front()
+                            await new_page.wait_for_load_state(
+                                "domcontentloaded", timeout=10000
+                            )
+                            state["page"] = new_page
+                            success = True
+                        elif page.url != old_page:
+                            success = True
+                finally:
+                    page.context.remove_listener("page", _on_new_page)
             else:
                 # Enhanced button/element clicking
                 try:
@@ -1024,11 +1073,12 @@ async def click(state: AgentState):
                         await asyncio.sleep(1)
                     else:
                         # Try coordinate-based click
+                        # Note: Mouse.click has no `force` parameter, so any
+                        # interception is ignored and coordinates are used as-is.
                         await page.mouse.click(
                             bbox_x,
                             bbox_y,
-                            delay=100,
-                            force=attempts == max_attempts
+                            delay=100
                         )
                     
                     # Wait briefly to check if click had an effect

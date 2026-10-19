@@ -462,6 +462,11 @@ async def scroll_pdf(state: AgentState):
 async def close_page(state: AgentState):
     context = state["page"].context  # Get the browser context from the current page
     await state["page"].close()        # Close the current tab
+    if not context.pages:
+        # Closing the tab left no pages behind, so context.pages[-1] raised
+        # "IndexError: list index out of range". Open a fresh tab to continue on.
+        page = await context.new_page()
+        return {"actions_taken": ["Closed the current tab; no other tab was open so a new one was opened"], "page": page}
     page = context.pages[-1] 
     print(page.url)
     return {"actions_taken": [f"Closed the current tab and switched to the last opened tab"], "page": page}
@@ -473,6 +478,11 @@ async def close_opened_link(state: AgentState):
     current_url = state["page"].url
     context = state["page"].context  # Get the browser context from the current page
     await state["page"].close()        # Close the current tab
+    if not context.pages:
+        # The clicked link did not leave another tab open, so context.pages[-1] raised
+        # "IndexError: list index out of range". Open a fresh tab to continue on.
+        page = await context.new_page()
+        return {"actions_taken": [f"Closed the opened link {current_url}; no other tab was open so a new one was opened"], "page": page}
     page = context.pages[-1] 
     await page.evaluate("""
     async () => {
@@ -788,6 +798,20 @@ async def annotate_page(state: AgentState):
     dom_elements = await execute_script(page)
 
     await remove_highlights(page)
+
+    if not dom_elements:
+        # captureInteractiveElements() returns an empty list when the page exposes no
+        # visible interactive elements (still loading, blank or blocked page, etc.).
+        # Indexing it here raised "IndexError: list index out of range".
+        return {
+            "dom_elements": [],
+            "is_pdf": False,
+            "actions_taken": [
+                f"No interactive elements found on {page.url}. The page may still be "
+                "loading or may be blocking automated access, so try scrolling, going "
+                "back or starting a new search instead."
+            ],
+        }
 
     if dom_elements[0]["type"] == "pdf":
         return {"dom_elements": dom_elements, "is_pdf": True}

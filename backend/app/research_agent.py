@@ -185,8 +185,9 @@ async def remove_highlights(page):
 
 async def click(state: AgentState):
     page = state["page"]
+    old_page_url = page.url
     element_type = state["action"]["action_element"]["type"]
-    try:    
+    try:
         xpath = state["action"]["action_element"]["xpath"]
     except Exception as e:
         bbox_x = state["action"]["action_element"]["x"]
@@ -222,38 +223,59 @@ async def click(state: AgentState):
     try:
         element = page.locator(f'xpath={xpath}')
         if element_type == "link":
+            # A link click can open a new tab or navigate in the same tab;
+            # accept either as success, and only report a problem when neither
+            # happens (issue #19: link clicks were always assumed to open a tab).
+            new_page_future = asyncio.get_running_loop().create_future()
+
+            def _on_new_page(p):
+                if not new_page_future.done():
+                    new_page_future.set_result(p)
+
+            page.context.on("page", _on_new_page)
             try:
-                async with page.context.expect_page(timeout=10000) as new_page_info:
-                    if platform.system() == "Darwin":
-                        await element.click(modifiers=["Meta"], timeout=5000)
-                    else:
-                        await element.click(modifiers=["Control"], timeout=5000)
-                    
+                if platform.system() == "Darwin":
+                    await element.click(modifiers=["Meta"], timeout=5000)
+                else:
+                    await element.click(modifiers=["Control"], timeout=5000)
+
                 try:
-                    new_page = await new_page_info.value
-                    if new_page:
+                    new_page = await asyncio.wait_for(
+                        asyncio.shield(new_page_future), timeout=5
+                    )
+                except asyncio.TimeoutError:
+                    new_page = None
+
+                if new_page:
+                    try:
                         await new_page.bring_to_front()
-                        await new_page.wait_for_load_state("domcontentloaded", timeout=10000)
-                        state["page"] = new_page
-                    else:
-                        return {
-                            "actions_taken": ["Link click didn't open new page, retrying..."],
-                            "page": state["page"],
-                            "new_page": False
-                        }
-                except TimeoutError:
-                    return {
-                        "actions_taken": ["Page load timed out, retrying..."],
-                        "page": state["page"],
-                        "new_page": False
-                    }
-            except TimeoutError:
-                # Fallback to coordinate-based clicking if element click times out
-                return {
-                    "actions_taken": ["Element click timed out, retrying with coordinates..."],
-                    "page": state["page"],
-                    "new_page": False
-                }
+                        await new_page.wait_for_load_state(
+                            "domcontentloaded", timeout=10000
+                        )
+                    except Exception:
+                        pass
+                    state["page"] = new_page
+                elif page.url == old_page_url:
+                    # Meta/Ctrl+click opened neither a tab nor a navigation:
+                    # fall back to a plain click so the link still works.
+                    await element.click(timeout=5000)
+                    try:
+                        new_page = await asyncio.wait_for(
+                            asyncio.shield(new_page_future), timeout=5
+                        )
+                        if new_page:
+                            try:
+                                await new_page.bring_to_front()
+                                await new_page.wait_for_load_state(
+                                    "domcontentloaded", timeout=10000
+                                )
+                            except Exception:
+                                pass
+                            state["page"] = new_page
+                    except asyncio.TimeoutError:
+                        pass
+            finally:
+                page.context.remove_listener("page", _on_new_page)
         else:
             await element.click(timeout=5000)
 
@@ -264,41 +286,42 @@ async def click(state: AgentState):
             bbox_y = state["action"]["action_element"]["y"]
             
             if element_type == "link":
+                # Coordinate fallback: a modifier+click can open a tab or
+                # navigate in place; accept either (issue #19).
+                new_page_future = asyncio.get_running_loop().create_future()
+
+                def _on_new_page(p):
+                    if not new_page_future.done():
+                        new_page_future.set_result(p)
+
+                page.context.on("page", _on_new_page)
                 try:
-                    async with page.context.expect_page(timeout=10000) as new_page_info:
-                        if platform.system() == "Darwin":
-                            await page.keyboard.down("Meta")
-                            await page.mouse.click(bbox_x, bbox_y, click_count=3)
-                            await page.keyboard.up("Meta")
-                        else:
-                            await page.keyboard.down("Control")
-                            await page.mouse.click(bbox_x, bbox_y, click_count=3)
-                            await page.keyboard.up("Control")
-                        
-                        try:
-                            new_page = await new_page_info.value
-                            if new_page:
+                    if platform.system() == "Darwin":
+                        await page.keyboard.down("Meta")
+                        await page.mouse.click(bbox_x, bbox_y, click_count=3)
+                        await page.keyboard.up("Meta")
+                    else:
+                        await page.keyboard.down("Control")
+                        await page.mouse.click(bbox_x, bbox_y, click_count=3)
+                        await page.keyboard.up("Control")
+
+                    try:
+                        new_page = await asyncio.wait_for(
+                            asyncio.shield(new_page_future), timeout=5
+                        )
+                        if new_page:
+                            try:
                                 await new_page.bring_to_front()
-                                await new_page.wait_for_load_state("domcontentloaded", timeout=10000)
-                                state["page"] = new_page
-                            else:
-                                return {
-                                    "actions_taken": ["Coordinate click didn't open new page, retrying..."],
-                                    "page": state["page"],
-                                    "new_page": False
-                                }
-                        except TimeoutError:
-                            return {
-                                "actions_taken": ["Page load timed out after coordinate click, retrying..."],
-                                "page": state["page"],
-                                "new_page": False
-                            }
-                except TimeoutError:
-                    return {
-                        "actions_taken": ["Coordinate click timed out, retrying..."],
-                        "page": state["page"],
-                        "new_page": False
-                    }
+                                await new_page.wait_for_load_state(
+                                    "domcontentloaded", timeout=10000
+                                )
+                            except Exception:
+                                pass
+                            state["page"] = new_page
+                    except asyncio.TimeoutError:
+                        pass
+                finally:
+                    page.context.remove_listener("page", _on_new_page)
             else:
                 await page.mouse.click(bbox_x, bbox_y)
         except Exception as e:

@@ -218,6 +218,24 @@ The system is built on a modern tech stack with three distinct agent types, each
 
 8. Access the API at `http://localhost:8000`
 
+### Optional Parallel search for the Research Agent
+
+The Research Agent can discover sources with [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp), using Fast mode without an account or API key. Install the optional client from `backend`:
+
+```bash
+poetry install -E parallel-search
+```
+
+Set `WEBROVER_SEARCH_PROVIDER=parallel` in `backend/.env` and restart the backend, then select **Research** in the UI. Search results appear as clickable links in the connected browser. The agent follows those links and reads sources through its existing browser and RAG workflow. Task and Deep Research agents keep their existing behavior.
+
+Google browser search remains the default. Set `WEBROVER_SEARCH_PROVIDER=google` to select it explicitly, or `disabled` to block the Research Agent's search-provider actions. This setting does not restrict ordinary browser navigation. API clients can override the setting for one research request:
+
+```json
+{"query": "Recent advances in solar cells", "agent_type": "research", "search_provider": "parallel"}
+```
+
+Parallel requests send the research query to `https://search.parallel.ai/mcp`. They have a 30-second timeout and surface errors without switching providers. Each research request gets a fresh opaque session ID, reused for query refinements within that request. Search results are rendered as text and HTTP(S) links; page reading still uses the browser, not the MCP fetch tool. Existing model credentials and browser setup are still required.
+
 ### Frontend Setup
 
 1. Open a new terminal and make sure you are in the WebRover folder:

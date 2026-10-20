@@ -45,6 +45,7 @@ class BrowserSetupRequest(BaseModel):
 class QueryRequest(BaseModel):
     query: str
     agent_type: Literal["task", "research", "deep_research"]
+    search_provider: Optional[Literal["google", "parallel", "disabled"]] = None
 
 @app.post("/setup-browser")
 async def setup_browser_endpoint(request: BrowserSetupRequest):
@@ -196,10 +197,11 @@ async def stream_task_agent_response(query: str, page, agent_graph):
         # Send end message
         yield f"data: {{\n  \"type\": \"end\",\n  \"content\": \"Stream completed\"\n}}\n\n"
 
-async def stream_research_agent_response(query: str, page, agent_graph):
+async def stream_research_agent_response(query: str, page, agent_graph, search_provider=None):
     try:
         initial_state = {
             "input": query,
+            "search_provider": search_provider,
             "page": page,
             "dom_elements": [],
             "action": None,
@@ -418,11 +420,13 @@ async def query_agent(request: QueryRequest):
         "deep_research": stream_deep_research_agent_response
     }
     
+    search_options = {"search_provider": request.search_provider} if request.agent_type == "research" else {}
     return StreamingResponse(
         stream_handlers[request.agent_type](
             request.query, 
             browser_session["page"],
-            agent_graphs[request.agent_type]
+            agent_graphs[request.agent_type],
+            **search_options
         ),
         media_type="text/event-stream",
         headers={

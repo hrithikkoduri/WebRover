@@ -26,6 +26,7 @@ from langchain_openai import OpenAIEmbeddings
 from langgraph.graph import START, END, StateGraph
 from IPython.display import Image, display
 import nltk
+from app.research_search import initialize_search, go_to_search, is_google_search
 
 
 
@@ -88,6 +89,8 @@ class AgentState(TypedDict):
     new_page: Literal[True, False]
     answer: str
     is_pdf: Literal[True, False]
+    search_provider: str
+    search_session_id: str
 
 
     
@@ -495,15 +498,6 @@ async def go_back(state: AgentState):
     return {"actions_taken": [f"Navigated back to {current_page} from {previous_page}"]}
 
 
-# Go to Search
-
-async def go_to_search(state: AgentState):
-    """Goes to google.com"""
-    page = state["page"]
-    await page.goto("https://www.google.com", timeout=30000, wait_until="domcontentloaded")
-    return {"actions_taken": [f"Navigated to Google"]}
-
-
 # WebPage RAG
 
 # Scrape Text
@@ -691,6 +685,9 @@ async def url_decide_node(state: AgentState):
     page = state["page"]
    
 
+    if (response.url != "NO_CHANGE" and is_google_search(response.url)
+            and state["search_provider"] != "google"):
+        return await go_to_search(state)
     if response.url == "NO_CHANGE":
         return {"page": page }
     else:
@@ -724,7 +721,8 @@ async def llm_call_node(state: AgentState):
             - Close Page: Close the current tab and switch focus to the last opened tab.
             - Wait: Pause for a specified amount of time.
             - Go Back: Navigate back to the previous page.
-            - Go to Search: Navigate to Google.
+            - Go to Search: Use the configured search provider. Set args to a concise search query.
+              With Parallel, results appear as links on the page; click a source and use Scroll and Read.
 
         Your inputs include:
             - The user's query (what the user wants to achieve).
@@ -1051,6 +1049,7 @@ async def empty_rag_store(state : AgentState):
 
 builder = StateGraph(AgentState)
 
+builder.add_node("initialize_search", initialize_search)
 builder.add_node("url_decide_node", url_decide_node)
 builder.add_node("annotate_page", annotate_page)
 builder.add_node("llm_call_node", llm_call_node)
@@ -1071,7 +1070,8 @@ builder.add_node("close_opened_link", close_opened_link)
 builder.add_node("self_review", self_review)
 
 
-builder.add_edge(START, "url_decide_node")
+builder.add_edge(START, "initialize_search")
+builder.add_edge("initialize_search", "url_decide_node")
 builder.add_edge("url_decide_node", "annotate_page")
 builder.add_edge("annotate_page", "llm_call_node")
 builder.add_conditional_edges("llm_call_node", tool_router, ["annotate_page", "click", "type", "scroll_and_read", "close_page", "wait", "go_back", "go_to_search"])

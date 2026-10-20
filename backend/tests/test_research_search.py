@@ -1,6 +1,7 @@
 """Focused provider/SDK tests; no model credentials or full NLP stack needed.
 
-Run from backend: python -m unittest discover -s tests -v
+Requires from backend: poetry install -E parallel-search
+Run from backend: poetry run python -m unittest discover -s tests -v
 """
 import asyncio
 from contextlib import contextmanager
